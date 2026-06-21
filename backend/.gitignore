@@ -1,0 +1,10 @@
+# dependencies
+/node_modules
+
+# environment variables (contains MongoDB credentials - never commit this)
+.env
+.env.local
+
+# misc
+.DS_Store
+npm-debug.log*
