@@ -13,7 +13,16 @@ const crypto = require("crypto");
 const { UserModel } = require("./model/UserModel");
 
 const PORT = process.env.PORT || 8080;
-const url = process.env.MONGO_URL;
+const url = process.env.MONGO_URL || process.env.MONGO_URI || process.env.MONGODB_URI || process.env.DATABASE_URL;
+
+if (!url) {
+  console.error("=================================================================");
+  console.error("ERROR: MongoDB Connection URL is not defined!");
+  console.error("Please configure MONGO_URL, MONGO_URI, or MONGODB_URI");
+  console.error("in your Environment Variables (e.g., on the Render dashboard).");
+  console.error("=================================================================");
+  process.exit(1);
+}
 const JWT_SECRET = process.env.JWT_SECRET || "ZERODHA_SECRET_KEY";
 
 const transporter = nodemailer.createTransport({
@@ -44,6 +53,9 @@ mongoose
   .then(() => {
     console.log("DB connected!");
 
+app.get("/", (req, res) => {
+  res.send("Zerodha API Backend is running!");
+});
 
 app.get('/allHoldings',async(req,res)=>{
   let allHoldings=await HoldingsModel.find({});
