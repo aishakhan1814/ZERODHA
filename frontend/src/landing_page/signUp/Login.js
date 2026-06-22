@@ -12,8 +12,9 @@ function Login() {
 
   const [otp, setOtp] = useState("");
 
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
+const [message, setMessage] = useState("");
+const [loading, setLoading] = useState(false);
+const [slowHint, setSlowHint] = useState(false);
 
   const handleChange = (e) => {
     setUser({
@@ -22,12 +23,17 @@ function Login() {
     });
   };
 
-  const handleCredentialsSubmit = async (e) => {
+ const handleCredentialsSubmit = async (e) => {
     e.preventDefault();
     setMessage("");
 
+    let slowTimer;
+
     try {
       setLoading(true);
+      setSlowHint(false);
+
+      slowTimer = setTimeout(() => setSlowHint(true), 6000);
 
       await axios.post(
         `${process.env.REACT_APP_BACKEND_URL}/login`,
@@ -44,7 +50,9 @@ function Login() {
         setMessage("Server Error");
       }
     } finally {
+      clearTimeout(slowTimer);
       setLoading(false);
+      setSlowHint(false);
     }
   };
 
@@ -132,6 +140,18 @@ function Login() {
           >
             {loading ? "Checking..." : "Login"}
           </button>
+          {slowHint && (
+            <p
+              style={{
+                textAlign: "center",
+                marginTop: "12px",
+                fontSize: "0.85rem",
+                color: "#888",
+              }}
+            >
+              Still working — our server is waking up after being idle, this can take up to a minute.
+            </p>
+          )}
         </form>
       )}
 
