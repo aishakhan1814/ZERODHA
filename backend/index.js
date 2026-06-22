@@ -7,7 +7,7 @@ const cors=require("cors");
 
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const crypto = require("crypto");
 
 const { UserModel } = require("./model/UserModel");
@@ -25,19 +25,12 @@ if (!url) {
 }
 const JWT_SECRET = process.env.JWT_SECRET || "ZERODHA_SECRET_KEY";
 
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 function generateOtp() {
   // 6-digit numeric OTP, e.g. "042913"
   return crypto.randomInt(0, 1000000).toString().padStart(6, "0");
 }
-
 
 const {HoldingsModel}=require("./model/HoldingsModel");
 const {PositionsModel} = require("./model/PositionsModel");
@@ -142,9 +135,9 @@ app.post("/login", async (req, res) => {
     user.otpExpiresAt = otpExpiresAt;
     await user.save();
 
-    try {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
+   try {
+      await resend.emails.send({
+        from: "Zerodha Clone <onboarding@resend.dev>",
         to: user.email,
         subject: "Your Zerodha login verification code",
         text: `Your verification code is ${otp}. It expires in 10 minutes. If you didn't try to log in, you can ignore this email.`,
