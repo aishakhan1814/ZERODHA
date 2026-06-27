@@ -7,7 +7,7 @@ const cors=require("cors");
 
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { Resend } = require("resend");
+const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 
 const { UserModel } = require("./model/UserModel");
@@ -25,7 +25,16 @@ if (!url) {
 }
 const JWT_SECRET = process.env.JWT_SECRET || "ZERODHA_SECRET_KEY";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Brevo SMTP transporter — sends OTP to ANY email address (free, 300/day)
+const transporter = nodemailer.createTransport({
+  host: "smtp-relay.brevo.com",
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.BREVO_SMTP_USER,
+    pass: process.env.BREVO_SMTP_PASS,
+  },
+});
 
 function generateOtp() {
   // 6-digit numeric OTP, e.g. "042913"
@@ -126,8 +135,7 @@ app.post("/login", async (req, res) => {
       });
     }
 
-    // Password is correct. Don't issue the token yet — generate an OTP,
-    // email it, and require /verify-otp before granting access.
+    // Password is correct. Generate OTP, email it, require /verify-otp before granting access.
     const otp = generateOtp();
     const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
@@ -135,9 +143,9 @@ app.post("/login", async (req, res) => {
     user.otpExpiresAt = otpExpiresAt;
     await user.save();
 
-   try {
-      await resend.emails.send({
-        from: "Zerodha Clone <onboarding@resend.dev>",
+    try {
+      await transporter.sendMail({
+        from: `"Zerodha Clone" <${process.env.BREVO_SMTP_USER}>`,
         to: user.email,
         subject: "Your Zerodha login verification code",
         text: `Your verification code is ${otp}. It expires in 10 minutes. If you didn't try to log in, you can ignore this email.`,
