@@ -9,20 +9,19 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 
-const { UserModel } = require("./model/UserModel");
+const { UserModel }      = require("./model/UserModel");
+const { HoldingsModel }  = require("./model/HoldingsModel");
+const { PositionsModel } = require("./model/PositionsModel");
+const { OrdersModel }    = require("./model/OrdersModel");
 
-const PORT = process.env.PORT || 8080;
-const url = process.env.MONGO_URL || process.env.MONGO_URI || process.env.MONGODB_URI || process.env.DATABASE_URL;
+const PORT       = process.env.PORT || 8080;
+const MONGO_URL  = process.env.MONGO_URL || process.env.MONGO_URI || process.env.MONGODB_URI || process.env.DATABASE_URL;
+const JWT_SECRET = process.env.JWT_SECRET || "ZERODHA_SECRET_KEY";
 
-if (!url) {
-  console.error("=================================================================");
-  console.error("ERROR: MongoDB Connection URL is not defined!");
-  console.error("Please configure MONGO_URL, MONGO_URI, or MONGODB_URI");
-  console.error("in your Environment Variables (e.g., on the Render dashboard).");
-  console.error("=================================================================");
+if (!MONGO_URL) {
+  console.error("ERROR: MongoDB URL not defined.");
   process.exit(1);
 }
-const JWT_SECRET = process.env.JWT_SECRET || "ZERODHA_SECRET_KEY";
 
 const BREVO_API_KEY = process.env.BREVO_API_KEY;
 const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL;
@@ -37,7 +36,6 @@ if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) {
 }
 
 function generateOtp() {
-  // 6-digit numeric OTP, e.g. "042913"
   return crypto.randomInt(0, 1000000).toString().padStart(6, "0");
 }
 
@@ -69,189 +67,99 @@ async function sendOtpEmail(toEmail, otp) {
   return response.json();
 }
 
-const {HoldingsModel}=require("./model/HoldingsModel");
-const {PositionsModel} = require("./model/PositionsModel");
-const {OrdersModel}=require("./model/OrdersModel")
 const app = express();
-
-
 app.use(cors());
 app.use(bodyParser.json());
 
-mongoose
-  .connect(url)
-  .then(() => {
-    console.log("DB connected!");
+mongoose.connect(MONGO_URL).then(() => {
+  console.log("DB connected!");
 
-app.get("/", (req, res) => {
-  res.send("Zerodha API Backend is running!");
-});
+  app.get("/", (req, res) => res.send("Zerodha API Backend is running!"));
 
-app.get('/allHoldings',async(req,res)=>{
-  let allHoldings=await HoldingsModel.find({});
-  res.json(allHoldings);
-})
-
-app.get('/allPositions',async(req,res)=>{
-  let allPositions=await PositionsModel.find({});
-  res.json(allPositions);
-})
-
-app.post('/newOrder',async(req,res)=>{
-  let newOrder=new OrdersModel({
-    name:req.body.name,
-    qty:req.body.qty,
-    price:req.body.price,
-    mode:req.body.mode,
-
+  app.get("/allHoldings", async (req, res) => {
+    res.json(await HoldingsModel.find({}));
   });
-  newOrder.save();
-  res.send("Order saved");
-})
-app.post("/signup", async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
 
-    const existingUser = await UserModel.findOne({ email });
+  app.get("/allPositions", async (req, res) => {
+    res.json(await PositionsModel.find({}));
+  });
 
-    if (existingUser) {
-      return res.status(400).json({
-        message: "Email already exists",
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const user = new UserModel({
-      name,
-      email,
-      password: hashedPassword,
+  app.post("/newOrder", async (req, res) => {
+    const order = new OrdersModel({
+      name: req.body.name, qty: req.body.qty,
+      price: req.body.price, mode: req.body.mode,
     });
+    await order.save();
+    res.send("Order saved");
+  });
 
-    await user.save();
-
-    res.status(201).json({
-      message: "Signup successful",
-    });
-
-  } catch (err) {
-    console.log(err);
-
-    res.status(500).json({
-      message: "Server Error",
-    });
-  }
-});
-
-app.post("/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    const user = await UserModel.findOne({ email });
-
-    if (!user) {
-      return res.status(400).json({
-        message: "Invalid Email",
-      });
+  app.post("/signup", async (req, res) => {
+    try {
+      const { name, email, password } = req.body;
+      if (await UserModel.findOne({ email }))
+        return res.status(400).json({ message: "Email already exists" });
+      const hashed = await bcrypt.hash(password, 10);
+      await new UserModel({ name, email, password: hashed }).save();
+      res.status(201).json({ message: "Signup successful" });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Server Error" });
     }
+  });
 
-    const match = await bcrypt.compare(password, user.password);
+  app.post("/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      const user = await UserModel.findOne({ email });
+      if (!user) return res.status(400).json({ message: "Invalid Email" });
 
-    if (!match) {
-      return res.status(400).json({
-        message: "Wrong Password",
-      });
-    }
+      const match = await bcrypt.compare(password, user.password);
+      if (!match) return res.status(400).json({ message: "Wrong Password" });
 
-    // Password is correct. Don't issue the token yet — generate an OTP,
-    // email it, and require /verify-otp before granting access.
-    const otp = generateOtp();
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-    user.otp = otp;
-    user.otpExpiresAt = otpExpiresAt;
-    await user.save();
-
-   try {
-      await sendOtpEmail(user.email, otp);
-    } catch (mailErr) {
-      console.error("Failed to send OTP email:", mailErr);
-      return res.status(500).json({
-        message: "Could not send verification email. Please try again.",
-      });
-    }
-
-    res.json({
-      message: "OTP sent to your email",
-      email: user.email,
-    });
-
-  } catch (err) {
-    console.log(err);
-
-    res.status(500).json({
-      message: "Server Error",
-    });
-  }
-});
-
-app.post("/verify-otp", async (req, res) => {
-  try {
-    const { email, otp } = req.body;
-
-    const user = await UserModel.findOne({ email });
-
-    if (!user || !user.otp || !user.otpExpiresAt) {
-      return res.status(400).json({
-        message: "No pending verification for this email",
-      });
-    }
-
-    if (user.otpExpiresAt < new Date()) {
-      user.otp = null;
-      user.otpExpiresAt = null;
+      const otp = generateOtp();
+      user.otp = otp;
+      user.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
       await user.save();
-      return res.status(400).json({
-        message: "OTP expired. Please log in again.",
-      });
+
+      try {
+        await sendOtpEmail(user.email, otp);
+      } catch (mailErr) {
+        console.error("Failed to send OTP email:", mailErr);
+        return res.status(500).json({
+          message: "Could not send verification email. Please try again.",
+        });
+      }
+
+      res.json({ message: "OTP sent to your email", email: user.email });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Server Error" });
     }
-
-    if (user.otp !== otp) {
-      return res.status(400).json({
-        message: "Incorrect OTP",
-      });
-    }
-
-    // OTP correct — clear it so it can't be reused, then issue the real token.
-    user.otp = null;
-    user.otpExpiresAt = null;
-    await user.save();
-
-    const token = jwt.sign(
-      { id: user._id },
-      JWT_SECRET,
-      { expiresIn: "1d" }
-    );
-
-    res.json({
-      message: "Login Successful",
-      token,
-      user,
-    });
-
-  } catch (err) {
-    console.log(err);
-
-    res.status(500).json({
-      message: "Server Error",
-    });
-  }
-});
-
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("MongoDB Connection Error:", err);
   });
+
+  app.post("/verify-otp", async (req, res) => {
+    try {
+      const { email, otp } = req.body;
+      const user = await UserModel.findOne({ email });
+      if (!user || !user.otp || !user.otpExpiresAt)
+        return res.status(400).json({ message: "No pending verification for this email" });
+      if (user.otpExpiresAt < new Date()) {
+        user.otp = null; user.otpExpiresAt = null;
+        await user.save();
+        return res.status(400).json({ message: "OTP expired. Please log in again." });
+      }
+      if (user.otp !== otp)
+        return res.status(400).json({ message: "Incorrect OTP" });
+
+      user.otp = null; user.otpExpiresAt = null;
+      await user.save();
+      const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: "1d" });
+      res.json({ message: "Login Successful", token, user });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Server Error" });
+    }
+  });
+
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}).catch(err => console.error("MongoDB Connection Error:", err));
