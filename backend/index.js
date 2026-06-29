@@ -7,7 +7,6 @@ const cors=require("cors");
 
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { Resend } = require("resend");
 const crypto = require("crypto");
 
 const { UserModel } = require("./model/UserModel");
@@ -25,11 +24,49 @@ if (!url) {
 }
 const JWT_SECRET = process.env.JWT_SECRET || "ZERODHA_SECRET_KEY";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL;
+const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || "Zerodha Clone";
+
+if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) {
+  console.error("=================================================================");
+  console.error("ERROR: BREVO_API_KEY or BREVO_SENDER_EMAIL is not defined!");
+  console.error("OTP emails will fail until both are set in your Environment");
+  console.error("Variables (e.g. on the Render dashboard).");
+  console.error("=================================================================");
+}
 
 function generateOtp() {
   // 6-digit numeric OTP, e.g. "042913"
   return crypto.randomInt(0, 1000000).toString().padStart(6, "0");
+}
+
+// Sends via Brevo's HTTPS REST API (NOT SMTP) — this matters because
+// Render's free tier blocks outbound SMTP ports (25/465/587), which is
+// why a nodemailer/SMTP-based approach (Gmail, Brevo SMTP relay, etc.)
+// silently times out from Render even though it works locally.
+async function sendOtpEmail(toEmail, otp) {
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": BREVO_API_KEY,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender: { email: BREVO_SENDER_EMAIL, name: BREVO_SENDER_NAME },
+      to: [{ email: toEmail }],
+      subject: "Your Zerodha login verification code",
+      textContent: `Your verification code is ${otp}. It expires in 10 minutes. If you didn't try to log in, you can ignore this email.`,
+    }),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`Brevo send failed (${response.status}): ${errBody}`);
+  }
+
+  return response.json();
 }
 
 const {HoldingsModel}=require("./model/HoldingsModel");
@@ -136,12 +173,7 @@ app.post("/login", async (req, res) => {
     await user.save();
 
    try {
-      await resend.emails.send({
-        from: "Zerodha Clone <onboarding@resend.dev>",
-        to: user.email,
-        subject: "Your Zerodha login verification code",
-        text: `Your verification code is ${otp}. It expires in 10 minutes. If you didn't try to log in, you can ignore this email.`,
-      });
+      await sendOtpEmail(user.email, otp);
     } catch (mailErr) {
       console.error("Failed to send OTP email:", mailErr);
       return res.status(500).json({
